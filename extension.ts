@@ -16,9 +16,13 @@ import './src/configuration/validators/neovimValidator';
 import './src/configuration/validators/vimrcValidator';
 
 import * as vscode from 'vscode';
-import { activate as activateFunc } from './extensionBase';
+import { activate as activateFunc, registerCommand, registerEventListener } from './extensionBase';
 import { Globals } from './src/globals';
 import { Register } from './src/register/register';
+import { vimrc } from './src/configuration/vimrc';
+import { configuration } from './src/configuration/configuration';
+import * as path from 'path';
+import { Logger } from './src/util/logger';
 
 export { getAndUpdateModeHandler } from './extensionBase';
 
@@ -26,9 +30,35 @@ export async function activate(context: vscode.ExtensionContext) {
   // Set the storage path to be used by history files
   Globals.extensionStoragePath = context.globalStoragePath;
 
-  activateFunc(context);
+  await activateFunc(context);
+
+  registerEventListener(context, vscode.workspace.onDidSaveTextDocument, async (document) => {
+    if (
+      configuration.vimrc.enable &&
+      vimrc.vimrcPath &&
+      path.relative(document.fileName, vimrc.vimrcPath) === ''
+    ) {
+      // TODO: Should instead probably call `loadConfiguration` (in extensionBase.ts)
+      await configuration.load();
+      Logger.info('Sourced new .vimrc');
+    }
+  });
+
+  registerCommand(
+    context,
+    'vim.editVimrc',
+    async () => {
+      if (vimrc.vimrcPath) {
+        const document = await vscode.workspace.openTextDocument(vimrc.vimrcPath);
+        await vscode.window.showTextDocument(document);
+      } else {
+        await vscode.window.showWarningMessage('No .vimrc found. Please set `vim.vimrc.path.`');
+      }
+    },
+    false,
+  );
 }
 
 export async function deactivate() {
-  await Register.saveToDisk();
+  await Register.saveToDisk(true);
 }

@@ -1,16 +1,22 @@
-import * as node from '../node';
-import { VimState } from '../../state/vimState';
 import { configuration } from '../../configuration/configuration';
+import { VimState } from '../../state/vimState';
 
-import { PutCommand, IPutCommandOptions } from '../../actions/commands/put';
+// eslint-disable-next-line id-denylist
+import { Parser, alt, any, optWhitespace, seq } from 'parsimmon';
+import { Position } from 'vscode';
+import { PutBeforeFromCmdLine, PutFromCmdLine } from '../../actions/commands/put';
+import { ErrorCode, VimError } from '../../error';
 import { Register } from '../../register/register';
 import { StatusBar } from '../../statusBar';
-import { VimError, ErrorCode } from '../../error';
-import { Position } from 'vscode';
+import { ExCommand } from '../../vimscript/exCommand';
+import { LineRange } from '../../vimscript/lineRange';
+import { bangParser } from '../../vimscript/parserUtils';
+import { expressionParser } from '../expression';
 
-export interface IPutCommandArguments extends node.ICommandArgs {
-  bang?: boolean;
+export interface IPutCommandArguments {
+  bang: boolean;
   register?: string;
+  fromExpression?: string;
 }
 
 //
@@ -18,24 +24,42 @@ export interface IPutCommandArguments extends node.ICommandArgs {
 // http://vimdoc.sourceforge.net/htmldoc/change.html#:put
 //
 
-export class PutExCommand extends node.CommandBase {
-  protected _arguments: IPutCommandArguments;
+export class PutExCommand extends ExCommand {
+  public static readonly argParser: Parser<PutExCommand> = seq(
+    bangParser,
+    alt(
+      expressionParser,
+      optWhitespace
+        .then(any)
+        .map((x) => ({ register: x }))
+        .fallback({ register: undefined }),
+    ),
+  ).map(([bang, register]) => new PutExCommand({ bang, ...register }));
+
+  public readonly arguments: IPutCommandArguments;
 
   constructor(args: IPutCommandArguments) {
     super();
-    this._arguments = args;
+    this.arguments = args;
   }
 
-  get arguments(): IPutCommandArguments {
-    return this._arguments;
-  }
-
-  public neovimCapable(): boolean {
+  public override neovimCapable(): boolean {
     return true;
   }
 
   async doPut(vimState: VimState, position: Position): Promise<void> {
+    if (this.arguments.fromExpression && this.arguments.register) {
+      // set the register to the value of the expression
+      Register.overwriteRegister(
+        vimState,
+        this.arguments.register,
+        this.arguments.fromExpression,
+        0,
+      );
+    }
+
     const registerName = this.arguments.register || (configuration.useSystemClipboard ? '*' : '"');
+
     if (!Register.isValidRegister(registerName)) {
       StatusBar.displayError(vimState, VimError.fromCode(ErrorCode.TrailingCharacters));
       return;
@@ -43,21 +67,17 @@ export class PutExCommand extends node.CommandBase {
 
     vimState.recordedState.registerName = registerName;
 
-    let options: IPutCommandOptions = {
-      forceLinewise: true,
-      forceCursorLastLine: true,
-      pasteBeforeCursor: this.arguments.bang,
-    };
-
-    await new PutCommand().exec(position, vimState, options);
+    const putCmd = this.arguments.bang ? new PutBeforeFromCmdLine() : new PutFromCmdLine();
+    putCmd.setInsertionLine(position.line);
+    await putCmd.exec(position, vimState);
   }
 
   async execute(vimState: VimState): Promise<void> {
     await this.doPut(vimState, vimState.cursorStopPosition);
   }
 
-  async executeWithRange(vimState: VimState, range: node.LineRange): Promise<void> {
-    const [_, end] = range.resolve(vimState);
+  override async executeWithRange(vimState: VimState, range: LineRange): Promise<void> {
+    const { end } = range.resolve(vimState);
     await this.doPut(vimState, new Position(end, 0).getLineEnd());
   }
 }

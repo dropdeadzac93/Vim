@@ -2,11 +2,15 @@ import * as vscode from 'vscode';
 
 import {
   IConfiguration,
+  IHighlightedYankConfiguration,
   IKeyRemapping,
   IModeSpecificStrings,
+  ITargetsConfiguration,
 } from '../src/configuration/iconfiguration';
 
 export class Configuration implements IConfiguration {
+  [key: string]: any;
+
   useSystemClipboard = false;
   useCtrlKeys = false;
   overrideCopy = true;
@@ -15,6 +19,7 @@ export class Configuration implements IConfiguration {
   ignorecase = true;
   smartcase = true;
   autoindent = true;
+  joinspaces = true;
   camelCaseMotion = {
     enable: false,
   };
@@ -30,18 +35,24 @@ export class Configuration implements IConfiguration {
   easymotion = false;
   easymotionMarkerBackgroundColor = '#0000';
   easymotionMarkerForegroundColorOneChar = '#ff0000';
-  easymotionMarkerForegroundColorTwoChar = '#ffa500'; // Deprecated! Use the ones bellow
   easymotionMarkerForegroundColorTwoCharFirst = '#ffb400';
   easymotionMarkerForegroundColorTwoCharSecond = '#b98300';
   easymotionIncSearchForegroundColor = '#7fbf00';
   easymotionDimColor = '#777777';
-  easymotionMarkerWidthPerChar = 8; // Deprecated! No longer needed!
   easymotionDimBackground = true;
-  easymotionMarkerFontFamily = 'Consolas'; // Deprecated! No longer needed!
-  easymotionMarkerFontSize = '14'; // Deprecated! No longer needed!
   easymotionMarkerFontWeight = 'bold';
-  easymotionMarkerMargin = 0; // Deprecated! No longer needed!
   easymotionKeys = 'hklyuiopnm,qwertzxcvbasdgjf;';
+  targets: ITargetsConfiguration = {
+    enable: false,
+    bracketObjects: {
+      enable: true,
+    },
+    smartQuotes: {
+      enable: false,
+      breakThroughLines: true,
+      aIncludesSurroundingSpaces: true,
+    },
+  };
   autoSwitchInputMethod = {
     enable: false,
     defaultIM: '',
@@ -55,6 +66,7 @@ export class Configuration implements IConfiguration {
   leader = '//';
   history = 50;
   incsearch = true;
+  inccommand = '' as const;
   startInInsertMode = false;
   statusBarColorControl = false;
   statusBarColors: IModeSpecificStrings<string | string[]> = {
@@ -65,25 +77,26 @@ export class Configuration implements IConfiguration {
     visualblock: '#A3BE8C',
     replace: '#D08770',
   };
-  debug: {
-    silent: false;
-    loggingLevelForAlert: 'error';
-    loggingLevelForConsole: 'debug';
-  };
   searchHighlightColor = 'rgba(150, 150, 255, 0.3)';
   searchHighlightTextColor = '';
-  highlightedyank: {
-    enable: false;
-    color: 'rgba(250, 240, 170, 0.5)';
-    textColor: '';
-    duration: 200;
+  searchMatchColor = 'rgba(255, 150, 150, 0.3)';
+  searchMatchTextColor = '';
+  substitutionColor = 'rgba(100, 255, 150, 0.3)';
+  substitutionTextColor = '';
+  highlightedyank: IHighlightedYankConfiguration = {
+    enable: false,
+    color: 'rgba(250, 240, 170, 0.5)',
+    textColor: '',
+    duration: 200,
   };
   tabstop = 2;
   editorCursorStyle = vscode.TextEditorCursorStyle.Line;
   expandtab = true;
+  // eslint-disable-next-line id-denylist
   number = true;
   relativenumber = false;
-  iskeyword = '/\\()"\':,.;<>~!@#$%^&*|+=[]{}`?-';
+  iskeyword = ''; // Use `editor.wordSeparators`
+  matchpairs = '(:),{:},[:]';
   visualstar = false;
   mouseSelectionGoesIntoVisualMode = true;
   changeWordIncludesWhitespace = false;
@@ -93,6 +106,8 @@ export class Configuration implements IConfiguration {
   gdefault = false;
   substituteGlobalFlag = false; // Deprecated in favor of gdefault
   neovimPath = 'nvim';
+  neovimUseConfigFile = false;
+  neovimConfigPath = '';
   vimrc = {
     enable: false,
     path: '',
@@ -115,16 +130,22 @@ export class Configuration implements IConfiguration {
   visualModeKeyBindingsNonRecursive: IKeyRemapping[] = [];
   commandLineModeKeyBindings: IKeyRemapping[] = [];
   commandLineModeKeyBindingsNonRecursive: IKeyRemapping[] = [];
-  insertModeKeyBindingsMap: Map<string, IKeyRemapping>;
-  normalModeKeyBindingsMap: Map<string, IKeyRemapping>;
-  operatorPendingModeKeyBindingsMap: Map<string, IKeyRemapping>;
-  visualModeKeyBindingsMap: Map<string, IKeyRemapping>;
-  commandLineModeKeyBindingsMap: Map<string, IKeyRemapping>;
-  whichwrap = '';
+  insertModeKeyBindingsMap: Map<string, IKeyRemapping> = new Map();
+  normalModeKeyBindingsMap: Map<string, IKeyRemapping> = new Map();
+  operatorPendingModeKeyBindingsMap: Map<string, IKeyRemapping> = new Map();
+  visualModeKeyBindingsMap: Map<string, IKeyRemapping> = new Map();
+  commandLineModeKeyBindingsMap: Map<string, IKeyRemapping> = new Map();
+  whichwrap = 'b,s';
   wrapKeys = {};
   report = 2;
-  digraphs: {};
+  digraphs = {};
   wrapscan = true;
   scroll = 20;
+  scrolloff = 5;
   startofline = true;
+  showMarksInGutter = true;
+  shell = '';
+  handleKeys = {
+    '<C-d>': true,
+  };
 }

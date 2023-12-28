@@ -1,23 +1,33 @@
 import * as vscode from 'vscode';
 
-import { BaseMovement } from '../actions/baseMotion';
+import { IMovement } from '../actions/baseMotion';
 import { configuration } from '../configuration/configuration';
-import { EasyMotion } from './../actions/plugins/easymotion/easymotion';
-import { EditorIdentity } from './../editorIdentity';
+import { IEasyMotion } from '../actions/plugins/easymotion/types';
 import { HistoryTracker } from './../history/historyTracker';
 import { Logger } from '../util/logger';
 import { Mode } from '../mode/mode';
-import { Range } from './../common/motion/range';
+import { Cursor } from '../common/motion/cursor';
 import { RecordedState } from './recordedState';
 import { RegisterMode } from './../register/register';
 import { ReplaceState } from './../state/replaceState';
-import { IKeyRemapping } from '../configuration/iconfiguration';
 import { SurroundState } from '../actions/plugins/surround';
 import { SUPPORT_NVIM, SUPPORT_IME_SWITCHER } from 'platform/constants';
 import { Position } from 'vscode';
+import { ExCommandLine, SearchCommandLine } from '../cmd_line/commandLine';
+import { ModeData } from '../mode/modeData';
+import { SearchDirection } from '../vimscript/pattern';
+import { globalState } from './globalState';
 
 interface IInputMethodSwitcher {
-  switchInputMethod(prevMode: Mode, newMode: Mode);
+  switchInputMethod(prevMode: Mode, newMode: Mode): Promise<void>;
+}
+
+interface IBaseMovement {
+  execActionWithCount(
+    position: Position,
+    vimState: VimState,
+    count: number,
+  ): Promise<Position | IMovement>;
 }
 
 interface INVim {
@@ -36,8 +46,6 @@ interface INVim {
  * Each ModeHandler holds a VimState, so there is one for each open editor.
  */
 export class VimState implements vscode.Disposable {
-  private static readonly logger = Logger.get('VimState');
-
   /**
    * The column the cursor wants to be at, or Number.POSITIVE_INFINITY if it should always
    * be the rightmost column.
@@ -51,9 +59,9 @@ export class VimState implements vscode.Disposable {
 
   public historyTracker: HistoryTracker;
 
-  public easyMotion: EasyMotion;
+  public easyMotion: IEasyMotion;
 
-  public identity: EditorIdentity;
+  public readonly documentUri: vscode.Uri;
 
   public editor: vscode.TextEditor;
 
@@ -62,15 +70,11 @@ export class VimState implements vscode.Disposable {
   }
 
   /**
-   * For timing out remapped keys like jj to esc.
-   */
-  public lastKeyPressedTimestamp = 0;
-
-  /**
    * Are multiple cursors currently present?
    */
-  // TODO: why isn't this a function?
-  public isMultiCursor = false;
+  public get isMultiCursor(): boolean {
+    return this._cursors.length > 1;
+  }
 
   /**
    * Is the multicursor something like visual block "multicursor", where
@@ -82,16 +86,21 @@ export class VimState implements vscode.Disposable {
   /**
    * Tracks movements that can be repeated with ; (e.g. t, T, f, and F).
    */
-  public lastSemicolonRepeatableMovement: BaseMovement | undefined = undefined;
+  public lastSemicolonRepeatableMovement: IBaseMovement | undefined = undefined;
 
   /**
    * Tracks movements that can be repeated with , (e.g. t, T, f, and F).
    */
-  public lastCommaRepeatableMovement: BaseMovement | undefined = undefined;
+  public lastCommaRepeatableMovement: IBaseMovement | undefined = undefined;
 
+  // TODO: move into ModeHandler
   public lastMovementFailed: boolean = false;
 
-  public alteredHistory = false;
+  /**
+   * Keep track of whether the last command that ran is able to be repeated
+   * with the dot command.
+   */
+  public lastCommandDotRepeatable: boolean = true;
 
   public isRunningDotCommand = false;
   public isReplayingMacro: boolean = false;
@@ -100,13 +109,6 @@ export class VimState implements vscode.Disposable {
    * The last visual selection before running the dot command
    */
   public dotCommandPreviousVisualSelection: vscode.Selection | undefined = undefined;
-
-  /**
-   * The first line number that was visible when SearchInProgressMode began (undefined if not searching)
-   */
-  public firstVisibleLineBeforeSearch: number | undefined = undefined;
-
-  public focusChanged = false;
 
   public surround: SurroundState | undefined = undefined;
 
@@ -125,117 +127,6 @@ export class VimState implements vscode.Disposable {
   public postponedCodeViewChanges: ViewChange[] = [];
 
   /**
-   * Used to indicate that a non recursive remap is being handled. This is used to prevent non-recursive
-   * remappings from looping.
-   */
-  public isCurrentlyPerformingNonRecursiveRemapping = false;
-
-  /**
-   * Used to indicate that a recursive remap is being handled. This is used to prevent recursive remappings
-   * from looping farther then maxMapDepth and to stop recursive remappings when an action fails.
-   */
-  public isCurrentlyPerformingRecursiveRemapping = false;
-
-  /**
-   * Used to indicate that a remap is being handled and the keys sent to modeHandler were not typed
-   * by the user.
-   */
-  public get isCurrentlyPerformingRemapping() {
-    return (
-      this.isCurrentlyPerformingNonRecursiveRemapping ||
-      this.isCurrentlyPerformingRecursiveRemapping
-    );
-  }
-
-  /**
-   * When performing a recursive remapping that has no parent remappings and that finishes while
-   * still waiting for timeout or another key to come we store that remapping here. This is used
-   * to be able to handle those buffered keys and any other key that the user might press to brake
-   * the timeout seperatly. Because if an error happens in the middle of a remap, the remaining
-   * remap keys shouldn't be handled but the user pressed ones should, but if an error happens on
-   * a user typed key, the following typed keys will still be handled.
-   *
-   * Example: having the following remapings:
-   * * `nmap <leader>lf Lfill`
-   * * `nmap Lfillc 4I<space><esc>`
-   * * `nmap Lfillp 2I<space><esc>`
-   * When user presses `<leader>lf` it remaps that to `Lfill` but because that is an ambiguous remap
-   * it creates the timeout and returns from remapper setting the performing remapping flag to false.
-   * This allows the user to then press `c` or `p` and the corresponding remap would run. But if the
-   * user presses another key or the timeout finishes we need to handle the `Lfill` keys and they
-   * need to know they were sent by a remap and not by the user so that in case the find 'i' in
-   * `Lfill` fails the last two `l` shouldn't be executed and any keys typed by the user after the
-   * remap that brake the timeout need to be handled seperatly from `Lfill`.
-   * (Check the tests for this example to understand better).
-   *
-   * To prevent this, we stored the remapping that finished waiting for timeout so that, if the
-   * timeout finishes or the user presses some keys that brake the potential remap, we will know
-   * what was the remapping waiting for timeout. So in case the timeout finishes we set the
-   * currently performing recursive remapping flag to true manually, send the <TimeoutFinished> key
-   * and in the end we set the flag back to false again and clear the stored remapping. In case
-   * the user presses one or more keys that brake the potential timeout we set the flag to true
-   * manually, handle the keys from the remapping and then set the flag back to false, clear the
-   * stored remapping and handle the keys pressed by the user seperatly.
-   * We do this because any VimError or ForceStopRemappingError are thrown only when performing a
-   * remapping.
-   */
-  public wasPerformingRemapThatFinishedWaitingForTimeout: IKeyRemapping | false = false;
-
-  /**
-   * Holds the current map depth count (number of nested remaps without using a character). In recursive remaps
-   * every time we map a key when already performing a remapping this number increases by one. When a remapping
-   * handling uses a character this number resets to 0.
-   *
-   * When it reaches the maxMapDepth it throws the VimError E223.
-   * (check vim documentation :help maxmapdepth)
-   */
-  public mapDepth: number = 0;
-
-  /**
-   * Used to reset the mapDepth on nested recursive remaps. Is set to false every time we get a remapping and is set to
-   * true when a character is used. We consider a character as being used when we get an action.
-   * (check vim documentation :help maxmapdepth).
-   *
-   * Example 1: if we remap `x -> y` and `y -> x` if we press any of those keys we will continuously find a new
-   * remap and increase the mapDepth without ever using an action until we hit maxMapDepth and we get E223 stopping
-   * it all.
-   *
-   * Example 2: if we map `a -> x`, `x -> y`, `y -> b` and `b -> w` and we set maxMapDepth to 4 we get 'E223 Recursive
-   * Mapping', because we get to the fourth remap without ever executing an action, but if we change the 'y' map to
-   * `y -> wb`, now the max mapDepth we hit is 3 and then we execute the action 'w' that resets the mapDepth and then
-   * call another remap of `b -> w` that executes another 'w', meaning that after pressing 'a' the result would be 'ww'.
-   * Another option would be to increase the maxMapDepth to 5 or more and then we could use the initial remaps that would
-   * turn the pressing of 'a' into a single 'w'.
-   *
-   * Example 3 (possible use case): if we remap `<leader>cb -> 0i//<Space><Esc>j<leader>cb` that recursively calls itself,
-   * every time the`0` key is sent we set remapUsedACharacter to true and reset mapDepth to 0 on all nested remaps so even
-   * if it calls itself more than 1000 times (on a file with more than 1000 lines) the mapDepth will always be reset to 0,
-   * which allows the remap to keep calling itself to comment all the lines until either we get to the last line and the 'j'
-   * action fails stopping the entire remap chain or the user presses `<C-c>` or `<Esc>` to forcelly stop the recursive remaps.
-   *
-   * P.S. This behavior is weird, because we should reduce the mapDepth by one when the remapping finished handling
-   * or if it failed. But this is the way Vim does it. This allows the user to create infinite looping remaps
-   * that call themselves and only stop after an error or the user pressing a key (usually <C-c> but we also
-   * allow <Esc> because the user might not allow the use of ctrl keys).
-   *
-   * P.S.2 This is a complicated explanation for a seemingly simple feature, but I wrote this because when I first read the
-   * Vim documentation it wasn't very clear to me how this worked, I first thought that mapDepth was like a map count but that
-   * is not the case because we can have thousands of nested remaps without ever hitting maxMapDepth like in Example 3, and I
-   * only started to understand it better when I tried Example 2 in Vim and some variations of it.
-   */
-  public remapUsedACharacter: boolean = false;
-
-  /**
-   * This will force Stop a recursive remapping. Used by <C-c> or <Esc> key when there is a recursive remapping
-   */
-  public forceStopRecursiveRemapping: boolean = false;
-
-  /**
-   * All the keys we've pressed so far.
-   */
-  public keyHistory: string[] = [];
-
-  /**
    * The cursor position (start, stop) when this action finishes.
    */
   public get cursorStartPosition(): Position {
@@ -243,7 +134,7 @@ export class VimState implements vscode.Disposable {
   }
   public set cursorStartPosition(value: Position) {
     if (!value.isValid(this.editor)) {
-      VimState.logger.warn(`invalid cursor start position. ${value.toString()}.`);
+      Logger.warn(`invalid cursor start position. ${value.toString()}.`);
     }
     this.cursors[0] = this.cursors[0].withNewStart(value);
   }
@@ -253,24 +144,29 @@ export class VimState implements vscode.Disposable {
   }
   public set cursorStopPosition(value: Position) {
     if (!value.isValid(this.editor)) {
-      VimState.logger.warn(`invalid cursor stop position. ${value.toString()}.`);
+      Logger.warn(`invalid cursor stop position. ${value.toString()}.`);
     }
     this.cursors[0] = this.cursors[0].withNewStop(value);
   }
 
   /**
-   * The position of every cursor.
+   * The position of every cursor. Will never be empty.
    */
-  private _cursors: Range[] = [new Range(new Position(0, 0), new Position(0, 0))];
+  private _cursors: Cursor[] = [new Cursor(new Position(0, 0), new Position(0, 0))];
 
-  public get cursors(): Range[] {
+  public get cursors(): Cursor[] {
     return this._cursors;
   }
-  public set cursors(value: Range[]) {
-    const map = new Map<string, Range>();
+  public set cursors(value: Cursor[]) {
+    if (value.length === 0) {
+      Logger.warn('Tried to set VimState.cursors to an empty array');
+      return;
+    }
+
+    const map = new Map<string, Cursor>();
     for (const cursor of value) {
       if (!cursor.isValid(this.editor)) {
-        VimState.logger.warn(`invalid cursor position. ${cursor.toString()}.`);
+        Logger.warn(`invalid cursor position. ${cursor.toString()}.`);
       }
 
       // use a map to ensure no two cursors are at the same location.
@@ -278,105 +174,122 @@ export class VimState implements vscode.Disposable {
     }
 
     this._cursors = [...map.values()];
-    this.isMultiCursor = this._cursors.length > 1;
   }
 
   /**
    * Initial state of cursors prior to any action being performed
    */
-  private _cursorsInitialState: Range[];
-  public get cursorsInitialState(): Range[] {
+  private _cursorsInitialState!: Cursor[];
+  public get cursorsInitialState(): Cursor[] {
     return this._cursorsInitialState;
   }
-  public set cursorsInitialState(cursors: Range[]) {
+  public set cursorsInitialState(cursors: Cursor[]) {
     this._cursorsInitialState = [...cursors];
   }
-
-  public replaceState: ReplaceState | undefined = undefined;
 
   /**
    * Stores last visual mode as well as what was selected for `gv`
    */
   public lastVisualSelection:
     | {
-        mode: Mode;
+        mode: Mode.Visual | Mode.VisualLine | Mode.VisualBlock;
         start: Position;
         end: Position;
       }
     | undefined = undefined;
 
   /**
-   * Was the previous mouse click past EOL
+   * The current mode and its associated state.
    */
-  public lastClickWasPastEol: boolean = false;
-
-  /**
-   * Used internally to ignore selection changes that were performed by us.
-   * 'ignoreIntermediateSelections': set to true when running an action, during this time
-   * all selections change events will be ignored.
-   * 'ourSelections': keeps track of our selections that will trigger a selection change event
-   * so that we can ignore them.
-   */
-  public selectionsChanged = {
-    /**
-     * Set to true when running an action, during this time
-     * all selections change events will be ignored.
-     */
-    ignoreIntermediateSelections: false,
-    /**
-     * keeps track of our selections that will trigger a selection change event
-     * so that we can ignore them.
-     */
-    ourSelections: Array<string>(),
-  };
-
-  /**
-   * The mode Vim will be in once this action finishes.
-   */
-  private _currentMode: Mode = Mode.Normal;
+  public modeData: ModeData = { mode: Mode.Normal };
 
   public get currentMode(): Mode {
-    return this._currentMode;
+    return this.modeData.mode;
   }
 
-  private _inputMethodSwitcher?: IInputMethodSwitcher;
+  private inputMethodSwitcher?: IInputMethodSwitcher;
   /**
    * The mode Vim is currently including pseudo-modes like OperatorPendingMode
    * This is to be used only by the Remappers when getting the remappings so don't
    * use it anywhere else.
    */
   public get currentModeIncludingPseudoModes(): Mode {
-    return this.recordedState.isOperatorPending(this._currentMode)
+    return this.recordedState.getOperatorState(this.currentMode) === 'pending'
       ? Mode.OperatorPendingMode
-      : this._currentMode;
+      : this.currentMode;
   }
 
-  public async setCurrentMode(mode: Mode): Promise<void> {
-    await this._inputMethodSwitcher?.switchInputMethod(this._currentMode, mode);
-    if (this.returnToInsertAfterCommand && mode === Mode.Insert) {
+  public async setModeData(modeData: ModeData): Promise<void> {
+    if (modeData === undefined) {
+      // TODO: remove this once we're sure this is no longer an issue (#6500, #6464)
+      throw new Error('Tried setting modeData to undefined');
+    }
+
+    await this.inputMethodSwitcher?.switchInputMethod(this.currentMode, modeData.mode);
+    if (this.returnToInsertAfterCommand && modeData.mode === Mode.Insert) {
       this.returnToInsertAfterCommand = false;
     }
-    this._currentMode = mode;
+
+    if (modeData.mode === Mode.SearchInProgressMode) {
+      globalState.searchState = modeData.commandLine.getSearchState();
+    }
 
     if (configuration.smartRelativeLine) {
       this.editor.options.lineNumbers =
-        mode === Mode.Insert
+        modeData.mode === Mode.Insert
           ? vscode.TextEditorLineNumbersStyle.On
           : vscode.TextEditorLineNumbersStyle.Relative;
     }
 
-    if (mode === Mode.SearchInProgressMode) {
-      this.firstVisibleLineBeforeSearch = this.editor.visibleRanges[0].start.line;
-    } else {
-      this.firstVisibleLineBeforeSearch = undefined;
-    }
+    this.modeData = modeData;
   }
 
-  public currentRegisterMode = RegisterMode.AscertainFromCurrentMode;
+  public async setCurrentMode(mode: Mode): Promise<void> {
+    if (mode === undefined) {
+      // TODO: remove this once we're sure this is no longer an issue (#6500, #6464)
+      throw new Error('Tried setting currentMode to undefined');
+    }
 
-  public get effectiveRegisterMode(): RegisterMode {
-    if (this.currentRegisterMode !== RegisterMode.AscertainFromCurrentMode) {
-      return this.currentRegisterMode;
+    await this.setModeData(
+      mode === Mode.Replace
+        ? {
+            mode,
+            replaceState: new ReplaceState(
+              this.cursors.map((cursor) => cursor.stop),
+              this.recordedState.count,
+            ),
+          }
+        : mode === Mode.CommandlineInProgress
+          ? {
+              mode,
+              commandLine: new ExCommandLine('', this.modeData.mode),
+            }
+          : mode === Mode.SearchInProgressMode
+            ? {
+                mode,
+                commandLine: new SearchCommandLine(this, '', SearchDirection.Forward),
+                firstVisibleLineBeforeSearch: this.editor.visibleRanges[0].start.line,
+              }
+            : mode === Mode.Insert
+              ? {
+                  mode,
+                  highSurrogate: undefined,
+                }
+              : { mode },
+    );
+  }
+
+  /**
+   * The currently active `RegisterMode`.
+   *
+   * When setting, `undefined` means "default for current `Mode`".
+   */
+  public set currentRegisterMode(registerMode: RegisterMode | undefined) {
+    this._currentRegisterMode = registerMode;
+  }
+  public get currentRegisterMode(): RegisterMode {
+    if (this._currentRegisterMode) {
+      return this._currentRegisterMode;
     }
     switch (this.currentMode) {
       case Mode.VisualLine:
@@ -387,9 +300,7 @@ export class VimState implements vscode.Disposable {
         return RegisterMode.CharacterWise;
     }
   }
-
-  public currentCommandlineText = '';
-  public statusBarCursorCharacterPos = 0;
+  private _currentRegisterMode: RegisterMode | undefined;
 
   public recordedState = new RecordedState();
 
@@ -398,11 +309,11 @@ export class VimState implements vscode.Disposable {
 
   public nvim?: INVim;
 
-  public constructor(editor: vscode.TextEditor) {
+  public constructor(editor: vscode.TextEditor, easyMotion: IEasyMotion) {
     this.editor = editor;
-    this.identity = EditorIdentity.fromEditor(editor);
+    this.documentUri = editor?.document.uri ?? vscode.Uri.file(''); // TODO: this is needed for some badly written tests
     this.historyTracker = new HistoryTracker(this);
-    this.easyMotion = new EasyMotion();
+    this.easyMotion = easyMotion;
   }
 
   async load() {
@@ -413,7 +324,7 @@ export class VimState implements vscode.Disposable {
 
     if (SUPPORT_IME_SWITCHER) {
       const ime = await import('../actions/plugins/imswitcher');
-      this._inputMethodSwitcher = new ime.InputMethodSwitcher();
+      this.inputMethodSwitcher = new ime.InputMethodSwitcher();
     }
   }
 
@@ -422,7 +333,7 @@ export class VimState implements vscode.Disposable {
   }
 }
 
-export class ViewChange {
-  public command: string;
-  public args: any;
+export interface ViewChange {
+  command: string;
+  args: any;
 }

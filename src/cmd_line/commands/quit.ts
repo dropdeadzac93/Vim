@@ -1,12 +1,13 @@
+import { Parser } from 'parsimmon';
 import * as vscode from 'vscode';
 
 import * as error from '../../error';
 import { VimState } from '../../state/vimState';
-import * as node from '../node';
+import { ExCommand } from '../../vimscript/exCommand';
+import { bangParser } from '../../vimscript/parserUtils';
 
-export interface IQuitCommandArguments extends node.ICommandArgs {
+export interface IQuitCommandArguments {
   bang?: boolean;
-  range?: node.LineRange;
   quitAll?: boolean;
 }
 
@@ -14,16 +15,24 @@ export interface IQuitCommandArguments extends node.ICommandArgs {
 //  Implements :quit
 //  http://vimdoc.sourceforge.net/htmldoc/editing.html#:quit
 //
-export class QuitCommand extends node.CommandBase {
-  protected _arguments: IQuitCommandArguments;
+export class QuitCommand extends ExCommand {
+  public static readonly argParser: (quitAll: boolean) => Parser<QuitCommand> = (
+    quitAll: boolean,
+  ) =>
+    bangParser.map(
+      (bang) =>
+        new QuitCommand({
+          bang,
+          quitAll,
+        }),
+    );
 
+  public override isRepeatableWithDot = false;
+
+  public arguments: IQuitCommandArguments;
   constructor(args: IQuitCommandArguments) {
     super();
-    this._arguments = args;
-  }
-
-  get arguments(): IQuitCommandArguments {
-    return this._arguments;
+    this.arguments = args;
   }
 
   async execute(vimState: VimState): Promise<void> {
@@ -34,12 +43,12 @@ export class QuitCommand extends node.CommandBase {
     if (
       vimState.document.isDirty &&
       !this.arguments.bang &&
-      (!duplicatedInSplit || this._arguments.quitAll)
+      (!duplicatedInSplit || this.arguments.quitAll)
     ) {
       throw error.VimError.fromCode(error.ErrorCode.NoWriteSinceLastChange);
     }
 
-    if (this._arguments.quitAll) {
+    if (this.arguments.quitAll) {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     } else {
       if (!this.arguments.bang) {

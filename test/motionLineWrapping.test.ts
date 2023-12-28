@@ -3,10 +3,10 @@ import { newTest } from './testSimplifier';
 import { cleanUpWorkspace, setupWorkspace } from './testUtils';
 
 suite('motion line wrapping', () => {
-  teardown(cleanUpWorkspace);
+  suiteTeardown(cleanUpWorkspace);
 
   suite('whichwrap enabled', () => {
-    setup(async () => {
+    suiteSetup(async () => {
       const configuration = new Configuration();
       configuration.tabstop = 4;
       configuration.expandtab = false;
@@ -76,7 +76,7 @@ suite('motion line wrapping', () => {
   });
 
   suite('whichwrap disabled', () => {
-    setup(async () => {
+    suiteSetup(async () => {
       const configuration = new Configuration();
       configuration.tabstop = 4;
       configuration.expandtab = false;
@@ -132,7 +132,7 @@ suite('motion line wrapping', () => {
   });
 
   suite('wrapscan enabled', () => {
-    setup(async () => {
+    suiteSetup(async () => {
       const configuration = new Configuration();
       configuration.wrapscan = true;
 
@@ -155,7 +155,7 @@ suite('motion line wrapping', () => {
   });
 
   suite('wrapscan disabled', () => {
-    setup(async () => {
+    suiteSetup(async () => {
       const configuration = new Configuration();
       configuration.wrapscan = false;
 
@@ -167,6 +167,7 @@ suite('motion line wrapping', () => {
       start: ['|line 1', 'line 2'],
       keysPressed: '/line\nn',
       end: ['line 1', '|line 2'],
+      statusBar: 'E385: Search hit BOTTOM without match for: line',
     });
 
     newTest({
@@ -174,6 +175,7 @@ suite('motion line wrapping', () => {
       start: ['|line 1', 'line 2'],
       keysPressed: '/line\nNN',
       end: ['|line 1', 'line 2'],
+      statusBar: 'E384: Search hit TOP without match for: line',
     });
   });
 });

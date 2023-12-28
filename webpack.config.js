@@ -5,6 +5,8 @@
 const path = require('path');
 const webpack = require('webpack');
 const { CleanWebpackPlugin } = require('clean-webpack-plugin');
+const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
+const CircularDependencyPlugin = require('circular-dependency-plugin');
 
 /**@type {import('webpack').Configuration}*/
 const config = {
@@ -20,7 +22,6 @@ const config = {
     libraryTarget: 'commonjs2',
     devtoolModuleFilenameTemplate: '../[resource-path]',
   },
-  devtool: 'source-map',
   externals: {
     vscode: 'commonjs vscode', // the vscode-module is created on-the-fly and must be excluded. Add other modules that cannot be webpack'ed, 📖 -> https://webpack.js.org/configuration/externals/
   },
@@ -28,8 +29,12 @@ const config = {
     // support reading TypeScript and JavaScript files, 📖 -> https://github.com/TypeStrong/ts-loader
     extensions: ['.ts', '.js'],
     alias: {
+      path: 'path-browserify',
       platform: path.resolve(__dirname, 'src', 'platform', 'node'),
     },
+  },
+  optimization: {
+    minimize: true,
   },
   module: {
     rules: [
@@ -37,12 +42,30 @@ const config = {
         test: /\.ts$/,
         exclude: /node_modules/,
         loader: 'ts-loader',
+        options: {
+          // Don't type check - ForkTsCheckerWebpackPlugin does this faster
+          transpileOnly: true,
+        },
       },
     ],
   },
   plugins: [
     new CleanWebpackPlugin({
       cleanOnceBeforeBuildPatterns: [], // disable initial clean
+    }),
+    new ForkTsCheckerWebpackPlugin(),
+    new CircularDependencyPlugin({
+      // exclude detection of files based on a RegExp
+      exclude: /node_modules/,
+      // include specific files based on a RegExp
+      include: /src/,
+      // add errors to webpack instead of warnings
+      failOnError: true,
+      // allow import cycles that include an asyncronous import,
+      // e.g. via import(/* webpackMode: "weak" */ './file.js')
+      allowAsyncCycles: true,
+      // set the current working directory for displaying module paths
+      cwd: process.cwd(),
     }),
   ],
 };
@@ -60,7 +83,6 @@ const nodelessConfig = {
     filename: 'extensionWeb.js',
     libraryTarget: 'umd',
   },
-  devtool: 'inline-source-map',
   externals: {
     vscode: 'commonjs vscode', // the vscode-module is created on-the-fly and must be excluded. Add other modules that cannot be webpack'ed, 📖 -> https://webpack.js.org/configuration/externals/
   },
@@ -70,17 +92,26 @@ const nodelessConfig = {
     alias: {
       platform: path.resolve(__dirname, 'src', 'platform', 'browser'),
     },
+    fallback: {
+      os: require.resolve('os-browserify/browser'),
+      path: require.resolve('path-browserify'),
+      process: require.resolve('process/browser'),
+      util: require.resolve('util'),
+    },
+  },
+  optimization: {
+    minimize: true,
   },
   module: {
     rules: [
       {
         test: /\.ts$/,
         exclude: /node_modules/,
-        use: [
-          {
-            loader: 'ts-loader',
-          },
-        ],
+        loader: 'ts-loader',
+        options: {
+          // Don't type check - ForkTsCheckerWebpackPlugin does this faster
+          transpileOnly: true,
+        },
       },
     ],
   },
@@ -92,8 +123,15 @@ const nodelessConfig = {
       resourceRegExp: /\/imswitcher$/,
     }),
     new webpack.IgnorePlugin({
+      resourceRegExp: /\/vimrc$/,
+    }),
+    new webpack.IgnorePlugin({
       resourceRegExp: /child_process$/,
     }),
+    new webpack.ProvidePlugin({
+      process: 'process/browser', // util requires this internally
+    }),
+    new ForkTsCheckerWebpackPlugin(),
   ],
 };
 

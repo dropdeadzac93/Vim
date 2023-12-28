@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as srcConfiguration from '../../src/configuration/configuration';
 import * as testConfiguration from '../testConfiguration';
+import * as vscode from 'vscode';
 import { cleanUpWorkspace, setupWorkspace } from './../testUtils';
 import { Mode } from '../../src/mode/mode';
 import { newTest } from '../testSimplifier';
@@ -33,18 +34,29 @@ suite('Configuration', () => {
 
     assert.strictEqual(normalizedKeybinds.length, testingKeybinds.length);
     assert.strictEqual(normalizedKeybinds.length, normalizedKeybindsMap.size);
-    assert.deepEqual(normalizedKeybinds[0].before, [' ', 'o']);
-    assert.deepEqual(normalizedKeybinds[0].after, ['o', '<Esc>', 'k']);
+    assert.deepStrictEqual(normalizedKeybinds[0].before, [' ', 'o']);
+    assert.deepStrictEqual(normalizedKeybinds[0].after, ['o', '<Esc>', 'k']);
   });
 
-  test('whichwrap is parsed into wrapKeys', async () => {
-    const wrapKeys = srcConfiguration.configuration.wrapKeys;
+  test('textwidth is configurable per-language', async () => {
+    const globalVimConfig = vscode.workspace.getConfiguration('vim');
+    const jsVimConfig = vscode.workspace.getConfiguration('vim', { languageId: 'javascript' });
 
-    const h = 'h';
-    const j = 'j';
+    try {
+      assert.strictEqual(jsVimConfig.get('textwidth'), 80);
+      await jsVimConfig.update('textwidth', 120, vscode.ConfigurationTarget.Global, true);
 
-    assert.strictEqual(wrapKeys[h], true);
-    assert.strictEqual(wrapKeys[j], undefined);
+      const updatedGlobalVimConfig = vscode.workspace.getConfiguration('vim');
+      assert.strictEqual(updatedGlobalVimConfig.get('textwidth'), 80);
+
+      const updatedJsVimConfig = vscode.workspace.getConfiguration('vim', {
+        languageId: 'javascript',
+      });
+      assert.strictEqual(updatedJsVimConfig.get('textwidth'), 120);
+    } finally {
+      await globalVimConfig.update('textwidth', undefined, vscode.ConfigurationTarget.Global);
+      await jsVimConfig.update('textwidth', undefined, vscode.ConfigurationTarget.Global);
+    }
   });
 
   newTest({

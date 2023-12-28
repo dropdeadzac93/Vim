@@ -1,56 +1,60 @@
 import * as vscode from 'vscode';
 
-import { configuration } from './../../configuration/configuration';
-import { VimState } from '../../state/vimState';
+// eslint-disable-next-line id-denylist
+import { any, Parser, seq, whitespace } from 'parsimmon';
 import { DefaultDigraphs } from '../../actions/commands/digraphs';
-import * as node from '../node';
+import { Digraph } from '../../configuration/iconfiguration';
+import { VimState } from '../../state/vimState';
 import { TextEditor } from '../../textEditor';
+import { ExCommand } from '../../vimscript/exCommand';
+import { bangParser, numberParser } from '../../vimscript/parserUtils';
+import { configuration } from './../../configuration/configuration';
 
-export interface IDigraphsCommandArguments extends node.ICommandArgs {
-  arg?: string;
+export interface IDigraphsCommandArguments {
+  bang: boolean;
+  newDigraphs: Array<[string, string, number]>;
 }
 
 interface DigraphQuickPickItem extends vscode.QuickPickItem {
   charCodes: number[];
 }
 
-export class DigraphsCommand extends node.CommandBase {
-  protected _arguments: IDigraphsCommandArguments;
+export class DigraphsCommand extends ExCommand {
+  public static readonly argParser: Parser<DigraphsCommand> = seq(
+    bangParser,
+    whitespace.then(seq(any, any, whitespace.then(numberParser))).many(),
+  ).map(([bang, newDigraphs]) => new DigraphsCommand({ bang, newDigraphs }));
 
+  private readonly arguments: IDigraphsCommandArguments;
   constructor(args: IDigraphsCommandArguments) {
     super();
-    this._arguments = args;
+    this.arguments = args;
   }
 
-  get arguments(): IDigraphsCommandArguments {
-    return this._arguments;
-  }
-
-  private makeQuickPicks(digraphs): Array<DigraphQuickPickItem> {
-    const quickPicks = new Array<DigraphQuickPickItem>();
-    for (let digraphKey of Object.keys(digraphs)) {
-      let [charDesc, charCodes] = digraphs[digraphKey];
-      quickPicks.push({
-        label: digraphKey,
+  private makeQuickPicks(digraphs: Array<[string, Digraph]>): DigraphQuickPickItem[] {
+    return digraphs.map(([shortcut, [charDesc, charCodes]]) => {
+      if (!Array.isArray(charCodes)) {
+        charCodes = [charCodes];
+      }
+      return {
+        label: shortcut,
         description: `${charDesc} (user)`,
         charCodes,
-      });
-    }
-    return quickPicks;
+      };
+    });
   }
 
   async execute(vimState: VimState): Promise<void> {
-    if (this.arguments.arg !== undefined && this.arguments.arg.length > 2) {
-      // TODO: Register digraphs in args in state
-    }
-    const digraphKeyAndContent = this.makeQuickPicks(configuration.digraphs).concat(
-      this.makeQuickPicks(DefaultDigraphs)
+    // TODO: use arguments
+
+    const digraphKeyAndContent = this.makeQuickPicks(Object.entries(configuration.digraphs)).concat(
+      this.makeQuickPicks([...DefaultDigraphs.entries()]),
     );
 
-    vscode.window.showQuickPick(digraphKeyAndContent).then(async (val) => {
+    void vscode.window.showQuickPick(digraphKeyAndContent).then(async (val) => {
       if (val) {
         const char = String.fromCharCode(...val.charCodes);
-        await TextEditor.insert(char);
+        await TextEditor.insert(vimState.editor, char);
       }
     });
   }

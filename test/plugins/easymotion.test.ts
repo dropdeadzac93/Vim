@@ -11,14 +11,13 @@ function easymotionCommand(trigger: EasymotionTrigger, searchWord: string, jumpK
 }
 
 suite('easymotion plugin', () => {
-  setup(async () => {
+  suiteSetup(async () => {
     const configuration = new Configuration();
     configuration.easymotion = true;
 
     await setupWorkspace(configuration);
   });
-
-  teardown(cleanUpWorkspace);
+  suiteTeardown(cleanUpWorkspace);
 
   newTest({
     title: 'Can handle s move',
@@ -197,14 +196,14 @@ suite('easymotion plugin', () => {
 
   newTest({
     title: 'Can handle linebackward move (1)',
-    start: ['abcDefGhi|'],
+    start: ['abcDefGh|i'],
     keysPressed: easymotionCommand({ key: 'h', leaderCount: 2 }, '', 'k'),
     end: ['abc|DefGhi'],
   });
 
   newTest({
     title: 'Can handle linebackward move (2)',
-    start: ['abcDefGhi|'],
+    start: ['abcDefGh|i'],
     keysPressed: easymotionCommand({ key: 'h', leaderCount: 2 }, '', 'h'),
     end: ['abcDef|Ghi'],
   });

@@ -62,7 +62,7 @@ suite('Multicursor', () => {
 
   test('vibd with multicursors deletes the content between brackets and keeps the cursors', async () => {
     await modeHandler.handleMultipleKeyEvents(
-      'i[(foo) asd ]\n[(bar) asd ]\n[(foo) asd ]'.split('')
+      'i[(foo) asd ]\n[(bar) asd ]\n[(foo) asd ]'.split(''),
     );
     await modeHandler.handleMultipleKeyEvents(['<Esc>', '0', 'l', 'l']);
     assertEqualLines(['[(foo) asd ]', '[(bar) asd ]', '[(foo) asd ]']);
@@ -77,7 +77,7 @@ suite('Multicursor', () => {
 
   test('vi[d with multicursors deletes the content between brackets and keeps the cursors', async () => {
     await modeHandler.handleMultipleKeyEvents(
-      'i[(foo) asd ]\n[(bar) asd ]\n[(foo) asd ]'.split('')
+      'i[(foo) asd ]\n[(bar) asd ]\n[(foo) asd ]'.split(''),
     );
     await modeHandler.handleMultipleKeyEvents(['<Esc>', '0', 'l', 'l']);
     assertEqualLines(['[(foo) asd ]', '[(bar) asd ]', '[(foo) asd ]']);
@@ -92,7 +92,7 @@ suite('Multicursor', () => {
 
   test('vitd with multicursors deletes the content between tags and keeps the cursors', async () => {
     await modeHandler.handleMultipleKeyEvents(
-      'i<div> foo bar</div> asd\n<div>foo asd</div>'.split('')
+      'i<div> foo bar</div> asd\n<div>foo asd</div>'.split(''),
     );
     await modeHandler.handleMultipleKeyEvents(['<Esc>', 'k', '0', 'W']);
     assertEqualLines(['<div> foo bar</div> asd', '<div>foo asd</div>']);
@@ -103,6 +103,20 @@ suite('Multicursor', () => {
     await modeHandler.handleMultipleKeyEvents(['v', 'i', 't', 'd']);
     assertEqualLines(['<div></div> asd', '<div></div>']);
     assert.strictEqual(modeHandler.vimState.cursors.length, 2);
+  });
+
+  newTest({
+    title: 'Can use "/" search with multicursors',
+    start: ['|line 1', 'line 2', 'line 3', 'line 4', 'line 5'],
+    keysPressed: '3<C-alt+down>v/ne \nd<Esc>',
+    end: ['|e 1', 'e 2', 'e 3', 'e 4', 'line 5'],
+  });
+
+  newTest({
+    title: 'Can use "?" search with multicursors',
+    start: ['line 1', 'line 2', 'line 3', 'line 4', 'line |5'],
+    keysPressed: '3<C-alt+up>v?ine\nd<Esc>',
+    end: ['line 1', '|l', 'l', 'l', 'l'],
   });
 });
 

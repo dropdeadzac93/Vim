@@ -1,9 +1,9 @@
 import * as assert from 'assert';
+import * as vscode from 'vscode';
 
 import { getAndUpdateModeHandler } from '../../extension';
 import { Mode } from '../../src/mode/mode';
 import { ModeHandler } from '../../src/mode/modeHandler';
-import { TextEditor } from '../../src/textEditor';
 import {
   assertEqualLines,
   cleanUpWorkspace,
@@ -45,9 +45,9 @@ suite('Mode Insert', () => {
     await modeHandler.handleMultipleKeyEvents(['i', 'h', 'e', 'l', 'l', 'o', '<Esc>']);
 
     assert.strictEqual(
-      TextEditor.getSelection().start.character,
+      vscode.window.activeTextEditor!.selection.start.character,
       4,
-      '<Esc> moved cursor position.'
+      '<Esc> moved cursor position.',
     );
   });
 
@@ -55,6 +55,21 @@ suite('Mode Insert', () => {
     await modeHandler.handleMultipleKeyEvents(['i', 't', 'e', 'x', 't', '<C-c>', 'o']);
 
     return assertEqualLines(['text', '']);
+  });
+
+  test('<copy> should not override system-clipboard after exiting insert mode', async () => {
+    const yankTextAtSystemClipboard = ['i', 't', 'e', 'x', 't', '<Esc>', 'v', 'i', 'w', '<copy>'];
+
+    const pasteTextAtInsertMode = ['a', '<C-r>', '+', '<copy>'];
+
+    await modeHandler.handleMultipleKeyEvents([
+      ...yankTextAtSystemClipboard,
+      ...pasteTextAtInsertMode,
+      '$',
+      ...pasteTextAtInsertMode,
+    ]);
+
+    return assertEqualLines(['texttexttext']);
   });
 
   test('<Esc> can exit insert', async () => {
@@ -109,47 +124,80 @@ suite('Mode Insert', () => {
     endMode: Mode.Insert,
   });
 
-  newTest({
-    title: "'<C-w>' deletes a word",
-    start: ['text text| text'],
-    keysPressed: 'i<C-w>',
-    end: ['text | text'],
-    endMode: Mode.Insert,
+  suite('<C-w>', () => {
+    newTest({
+      title: '`<C-w>` deletes a word',
+      start: ['text text| text'],
+      keysPressed: 'i<C-w>',
+      end: ['text | text'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '`<C-w>` in whitespace deletes whitespace and prior word',
+      start: ['one two     | three'],
+      keysPressed: 'i<C-w>',
+      end: ['one | three'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '`<C-w>` on leading whitespace deletes to start of line',
+      start: ['foo', '  |bar'],
+      keysPressed: 'i<C-w>',
+      end: ['foo', '|bar'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '`<C-w>` at beginning of line deletes line break',
+      start: ['foo', '|bar'],
+      keysPressed: 'i<C-w>',
+      end: ['foo|bar'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '`<C-w>` at beginning of document does nothing',
+      start: ['|foo', 'bar'],
+      keysPressed: 'i<C-w>',
+      end: ['|foo', 'bar'],
+      endMode: Mode.Insert,
+    });
   });
 
-  newTest({
-    title: 'Can handle <C-w> on leading whitespace',
-    start: ['foo', '  |bar'],
-    keysPressed: 'i<C-w>',
-    end: ['foo', '|bar'],
-  });
+  suite('<C-u>', () => {
+    newTest({
+      title: '<C-u> deletes to start of line',
+      start: ['text |text'],
+      keysPressed: 'i<C-u>',
+      end: ['|text'],
+      endMode: Mode.Insert,
+    });
 
-  newTest({
-    title: 'Can handle <C-w> at beginning of line',
-    start: ['foo', '|bar'],
-    keysPressed: 'i<C-w>',
-    end: ['foo|bar'],
-  });
+    newTest({
+      title: 'Can handle <C-u> on leading characters',
+      start: ['{', '  foo: |true', '}'],
+      keysPressed: 'i<C-u>',
+      end: ['{', '  |true', '}'],
+      endMode: Mode.Insert,
+    });
 
-  newTest({
-    title: '<C-u> deletes to start of line',
-    start: ['text |text'],
-    keysPressed: 'i<C-u>',
-    end: ['|text'],
-  });
+    newTest({
+      title: 'Can handle <C-u> on leading whitespace',
+      start: ['{', '  |true', '}'],
+      keysPressed: 'i<C-u>',
+      end: ['{', '|true', '}'],
+      endMode: Mode.Insert,
+    });
 
-  newTest({
-    title: 'Can handle <C-u> on leading characters',
-    start: ['{', '  foo: |true', '}'],
-    keysPressed: 'i<C-u>',
-    end: ['{', '  |true', '}'],
-  });
-
-  newTest({
-    title: 'Can handle <C-u> on leading whitespace',
-    start: ['{', '  |true', '}'],
-    keysPressed: 'i<C-u>',
-    end: ['{', '|true', '}'],
+    newTest({
+      title: '<C-u> at start of line deletes line break',
+      start: ['one', '|two', 'three'],
+      keysPressed: 'i<C-u>',
+      end: ['one|two', 'three'],
+      endMode: Mode.Insert,
+    });
   });
 
   test('Correctly places the cursor after deleting the previous line break', async () => {
@@ -171,9 +219,9 @@ suite('Mode Insert', () => {
     assertEqualLines(['onetwo']);
 
     assert.strictEqual(
-      TextEditor.getSelection().start.character,
+      vscode.window.activeTextEditor!.selection.start.character,
       3,
-      '<BS> moved cursor to correct position'
+      '<BS> moved cursor to correct position',
     );
   });
 
@@ -183,21 +231,24 @@ suite('Mode Insert', () => {
     assertEqualLines(['  ']);
   });
 
-  test('will remove closing bracket', async () => {
+  test('<BS> removes closing bracket just inserted', async () => {
+    await modeHandler.handleMultipleKeyEvents(['i', '(']);
+
+    assertEqualLines(['()']);
+
+    await modeHandler.handleMultipleKeyEvents(['<BS>', '<Esc>']);
+
+    assertEqualLines(['']);
+  });
+
+  test('<BS> does not remove closing bracket inserted before', async () => {
     await modeHandler.handleMultipleKeyEvents(['i', '(', '<Esc>']);
 
     assertEqualLines(['()']);
 
     await modeHandler.handleMultipleKeyEvents(['a', '<BS>', '<Esc>']);
 
-    assertEqualLines(['']);
-  });
-
-  newTest({
-    title: 'Backspace works on whitespace only lines',
-    start: ['abcd', '     |    '],
-    keysPressed: 'a<BS><Esc>',
-    end: ['abcd', '   | '],
+    assertEqualLines([')']);
   });
 
   newTest({
@@ -212,6 +263,28 @@ suite('Mode Insert', () => {
     start: ['|bcd'],
     keysPressed: 'i<BS>a<Esc>',
     end: ['|abcd'],
+  });
+
+  newTest({
+    title: 'Backspace in leading whitespace 1',
+    start: ['        |    xyz'],
+    editorOptions: {
+      tabSize: 4,
+    },
+    keysPressed: 'i<BS>',
+    end: ['    |    xyz'],
+    endMode: Mode.Insert,
+  });
+
+  newTest({
+    title: 'Backspace in leading whitespace 2',
+    start: ['       |    xyz'],
+    editorOptions: {
+      tabSize: 4,
+    },
+    keysPressed: 'i<BS>',
+    end: ['    |    xyz'],
+    endMode: Mode.Insert,
   });
 
   newTest({
@@ -375,18 +448,225 @@ suite('Mode Insert', () => {
     assertEqualLines(['🚀🚀']);
   });
 
-  newTest({
-    title: 'Can insert last inserted text',
-    start: ['test|'],
-    keysPressed: 'ahello<Esc>a<C-a>',
-    end: ['testhellohello|'],
+  suite('<C-a>', () => {
+    newTest({
+      title: 'Basic <C-a> test',
+      start: ['tes|t'],
+      keysPressed: 'a' + 'hello' + '<Esc>' + 'a' + '<C-a>',
+      end: ['testhellohello|'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-a> with <BS>',
+      start: ['tes|t'],
+      keysPressed: 'i' + '<BS>' + '<Esc>' + 'a' + '<C-a>',
+      end: ['t|t'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-a> with <BS> then regular character',
+      start: ['tes|t'],
+      keysPressed: 'i' + '<BS>1' + '<Esc>' + 'i' + '<C-a>',
+      end: ['t1|1t'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-a> with arrows ignores everything before last arrow',
+      start: ['one |two three'],
+      keysPressed: 'i' + 'X<left>Y<left>Z' + '<Esc>' + 'W' + 'i' + '<C-a>',
+      end: ['one ZYXtwo Z|three'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-a> insertion with arrows always inserts just before cursor',
+      start: ['o|ne two three'],
+      keysPressed: 'A' + 'X<left>Y<left>Z' + '<Esc>' + '0W' + 'i' + '<C-a>',
+      end: ['one Z|two threeZYX'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-a> before entering any text',
+      start: ['tes|t'],
+      keysPressed: 'i' + '<C-a>',
+      end: ['tes|t'],
+      endMode: Mode.Insert,
+      statusBar: 'E29: No inserted text yet',
+    });
   });
 
-  test('Can handle no inserted text yet when executing <ctrl-a>', async () => {
-    try {
-      await modeHandler.handleMultipleKeyEvents(['i', '<C-a>']);
-    } catch (e) {
-      assert(false);
-    }
+  suite('<C-y>', () => {
+    newTest({
+      title: '<C-y> inserts character above cursor',
+      start: ['abcde', '12|3', 'ABCDE'],
+      keysPressed: 'i' + '<C-y><C-y>',
+      end: ['abcde', '12cd|3', 'ABCDE'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-y> does nothing if line below is too short',
+      start: ['abcde', '12|3', 'ABCDE'],
+      keysPressed: 'i' + '<C-y><C-y><C-y><C-y><C-y><C-y>',
+      end: ['abcde', '12cde|3', 'ABCDE'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-y> does nothing on first line',
+      start: ['|', 'ABCDE'],
+      keysPressed: 'i' + '<C-y><C-y>',
+      end: ['|', 'ABCDE'],
+      endMode: Mode.Insert,
+    });
+  });
+
+  suite('<C-e>', () => {
+    newTest({
+      title: '<C-e> inserts character below cursor',
+      start: ['abcde', '12|3', 'ABCDE'],
+      keysPressed: 'i' + '<C-e><C-e>',
+      end: ['abcde', '12CD|3', 'ABCDE'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-e> does nothing if line below is too short',
+      start: ['abcde', '12|3', 'ABCDE'],
+      keysPressed: 'i' + '<C-e><C-e><C-e><C-e><C-e><C-e>',
+      end: ['abcde', '12CDE|3', 'ABCDE'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-e> does nothing on last line',
+      start: ['abcde', '|'],
+      keysPressed: 'i' + '<C-e><C-e>',
+      end: ['abcde', '|'],
+      endMode: Mode.Insert,
+    });
+  });
+
+  newTest({
+    title: "Can handle '<C-r>' paste register",
+    start: ['foo |bar'],
+    keysPressed: 'yei<C-r>"',
+    end: ['foo bar|bar'],
+    endMode: Mode.Insert,
+  });
+
+  newTest({
+    title: "Can handle '<C-r>' paste register with multiple cursors",
+    start: ['foo |bar', 'foo bar'],
+    // create two cursors on bar, yank. Then paste it in insert mode
+    keysPressed: 'gbgby' + 'i<C-r>"',
+    end: ['foo bar|bar', 'foo barbar'],
+    endMode: Mode.Insert,
+  });
+
+  suite('<C-t>', () => {
+    newTest({
+      title: '<C-t> increases indent (2 spaces)',
+      editorOptions: { insertSpaces: true, tabSize: 2 },
+      start: ['    x|yz'],
+      keysPressed: 'i' + '<C-t>',
+      end: ['      x|yz'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-t> increases indent (4 spaces)',
+      editorOptions: { insertSpaces: true, tabSize: 4 },
+      start: ['    x|yz'],
+      keysPressed: 'i' + '<C-t>',
+      end: ['        x|yz'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-t> increases indent (tab)',
+      editorOptions: { insertSpaces: false },
+      start: ['\tx|yz'],
+      keysPressed: 'i' + '<C-t>',
+      end: ['\t\tx|yz'],
+      endMode: Mode.Insert,
+    });
+  });
+
+  suite('<C-d>', () => {
+    newTest({
+      title: '<C-d> decreases indent (2 spaces)',
+      editorOptions: { insertSpaces: true, tabSize: 2 },
+      start: ['        x|yz'],
+      keysPressed: 'i' + '<C-d>',
+      end: ['      x|yz'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-d> decreases indent (4 spaces)',
+      editorOptions: { insertSpaces: true, tabSize: 4 },
+      start: ['        x|yz'],
+      keysPressed: 'i' + '<C-d>',
+      end: ['    x|yz'],
+      endMode: Mode.Insert,
+    });
+
+    newTest({
+      title: '<C-d> decreases indent (tab)',
+      editorOptions: { insertSpaces: false },
+      start: ['\t\tx|yz'],
+      keysPressed: 'i' + '<C-d>',
+      end: ['\tx|yz'],
+      endMode: Mode.Insert,
+    });
+  });
+
+  suite('VSCode auto-surround', () => {
+    test('preserves selection', async () => {
+      await modeHandler.handleMultipleKeyEvents(['i', 's', 'e', 'l', 'e', 'c', 't']);
+      await vscode.commands.executeCommand('editor.action.selectAll');
+      await modeHandler.handleKeyEvent('"');
+      assertEqualLines(['"select"']);
+      assert.strictEqual(modeHandler.currentMode, Mode.Insert);
+      assert.strictEqual(vscode.window.activeTextEditor!.selection.start.character, 1);
+      assert.strictEqual(vscode.window.activeTextEditor!.selection.end.character, 7);
+    });
+
+    test('replaces selection', async () => {
+      await modeHandler.handleMultipleKeyEvents(['i', 't', 'e', 'm', 'p']);
+      await vscode.commands.executeCommand('editor.action.selectAll');
+      await modeHandler.handleMultipleKeyEvents(['"', 'f', 'i', 'n', 'a', 'l']);
+      assertEqualLines(['"final"']);
+      assert.strictEqual(modeHandler.currentMode, Mode.Insert);
+      assert.strictEqual(vscode.window.activeTextEditor!.selection.start.character, 6);
+      assert.strictEqual(vscode.window.activeTextEditor!.selection.end.character, 6);
+    });
+
+    test('stacks', async () => {
+      await modeHandler.handleMultipleKeyEvents(['i', 't', 'e', 'x', 't']);
+      await vscode.commands.executeCommand('editor.action.selectAll');
+
+      await modeHandler.handleMultipleKeyEvents(['"', "'", '(', '[', '{', '<', '`']);
+      assertEqualLines(['"\'([{<`text`>}])\'"']);
+    });
+
+    test('handles snippet', async () => {
+      await modeHandler.handleKeyEvent('i');
+      await vscode.commands.executeCommand('editor.action.insertSnippet', {
+        snippet: '${3:foo} ${1:bar} ${2:baz}',
+      });
+      await modeHandler.handleMultipleKeyEvents(['(', 'o', 'n', 'e']);
+      await vscode.commands.executeCommand('jumpToNextSnippetPlaceholder');
+      await modeHandler.handleMultipleKeyEvents(['<', 't', 'w', 'o']);
+      await vscode.commands.executeCommand('jumpToNextSnippetPlaceholder');
+      await modeHandler.handleKeyEvent('`');
+      assertEqualLines(['`foo` (one) <two>']);
+      assert.strictEqual(modeHandler.currentMode, Mode.Insert);
+    });
   });
 });

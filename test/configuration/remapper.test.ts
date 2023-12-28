@@ -1,19 +1,16 @@
-import * as assert from 'assert';
+import { strict as assert } from 'assert';
 import * as vscode from 'vscode';
 
-import { Remappers, Remapper } from '../../src/configuration/remapper';
+import { getAndUpdateModeHandler } from '../../extension';
+import { IKeyRemapping } from '../../src/configuration/iconfiguration';
+import { Remapper, Remappers } from '../../src/configuration/remapper';
 import { Mode } from '../../src/mode/mode';
 import { ModeHandler } from '../../src/mode/modeHandler';
-import { Configuration } from '../testConfiguration';
-import { setupWorkspace, cleanUpWorkspace, assertEqualLines } from '../testUtils';
-import { IKeyRemapping } from '../../src/configuration/iconfiguration';
 import { IRegisterContent, Register } from '../../src/register/register';
-import { getAndUpdateModeHandler } from '../../extension';
 import { VimState } from '../../src/state/vimState';
-import { TextEditor } from '../../src/textEditor';
 import { StatusBar } from '../../src/statusBar';
-
-/* tslint:disable:no-string-literal */
+import { Configuration } from '../testConfiguration';
+import { assertEqualLines, cleanUpWorkspace, setupWorkspace } from '../testUtils';
 
 suite('Remapper', () => {
   let modeHandler: ModeHandler;
@@ -80,16 +77,15 @@ suite('Remapper', () => {
       super('configKey', [Mode.Insert]);
     }
 
-    public findMatchingRemap(
+    public override findMatchingRemap(
       userDefinedRemappings: Map<string, IKeyRemapping>,
       inputtedKeys: string[],
-      currentMode: Mode
     ) {
-      return super.findMatchingRemap(userDefinedRemappings, inputtedKeys, currentMode);
+      return super.findMatchingRemap(userDefinedRemappings, inputtedKeys);
     }
 
     public getRemappedKeySequenceLengthRange(
-      remappings: Map<string, IKeyRemapping>
+      remappings: Map<string, IKeyRemapping>,
     ): [number, number] {
       return TestRemapper.getRemappedKeysLengthRange(remappings);
     }
@@ -205,11 +201,7 @@ suite('Remapper', () => {
 
       // act
       const testRemapper = new TestRemapper();
-      const actual = testRemapper.findMatchingRemap(
-        remappings,
-        testCase.input.split(''),
-        testCase.mode
-      );
+      const actual = testRemapper.findMatchingRemap(remappings, testCase.input.split(''));
 
       // assert
       if (testCase.expectedAfter) {
@@ -217,9 +209,9 @@ suite('Remapper', () => {
           actual,
           `Expected remap for before=${testCase.before}. input=${testCase.input}. mode=${
             Mode[testCase.mode]
-          }.`
+          }.`,
         );
-        assert.deepStrictEqual(actual!.after, testCase.expectedAfter.split(''));
+        assert.deepStrictEqual(actual.after, testCase.expectedAfter.split(''));
       } else {
         assert.strictEqual(actual, undefined);
       }
@@ -248,7 +240,7 @@ suite('Remapper', () => {
     edit.insert(
       vscode.window.activeTextEditor!.document.uri,
       new vscode.Position(0, 0),
-      expectedDocumentContent
+      expectedDocumentContent,
     );
     await vscode.workspace.applyEdit(edit);
 
@@ -258,8 +250,9 @@ suite('Remapper', () => {
     // act
     let actual = false;
     try {
-      actual = await remapper.sendKey(['j', 'j'], modeHandler, modeHandler.vimState);
+      actual = await remapper.sendKey(['j', 'j'], modeHandler);
     } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       assert.fail(e);
     }
 
@@ -284,8 +277,9 @@ suite('Remapper', () => {
     // act
     let actual = false;
     try {
-      actual = await remapper.sendKey(['0'], modeHandler, modeHandler.vimState);
+      actual = await remapper.sendKey(['0'], modeHandler);
     } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       assert.fail(e);
     }
 
@@ -311,7 +305,7 @@ suite('Remapper', () => {
     edit.insert(
       vscode.window.activeTextEditor!.document.uri,
       new vscode.Position(0, 0),
-      expectedDocumentContent
+      expectedDocumentContent,
     );
     await vscode.workspace.applyEdit(edit);
 
@@ -321,8 +315,9 @@ suite('Remapper', () => {
     // act
     let actual = false;
     try {
-      actual = await remapper.sendKey(['<C-e>'], modeHandler, modeHandler.vimState);
+      actual = await remapper.sendKey(['<C-e>'], modeHandler);
     } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       assert.fail(e);
     }
 
@@ -347,8 +342,9 @@ suite('Remapper', () => {
     // act
     let actual = false;
     try {
-      actual = await remapper.sendKey([leaderKey, 'w'], modeHandler, modeHandler.vimState);
+      actual = await remapper.sendKey([leaderKey, 'w'], modeHandler);
     } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       assert.fail(e);
     }
 
@@ -375,8 +371,9 @@ suite('Remapper', () => {
     // act
     let actual = false;
     try {
-      actual = await remapper.sendKey([leaderKey, 'c'], modeHandler, modeHandler.vimState);
+      actual = await remapper.sendKey([leaderKey, 'c'], modeHandler);
     } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       assert.fail(e);
     }
 
@@ -401,15 +398,15 @@ suite('Remapper', () => {
 
     const expected = 'text-to-put-on-register';
     let actual: IRegisterContent | undefined;
-    Register.put(expected, modeHandler.vimState);
-    actual = await Register.get(vimState);
+    Register.put(modeHandler.vimState, expected);
+    actual = await Register.get(vimState.recordedState.registerName);
     assert.strictEqual(actual?.text, expected);
 
     // act
     await modeHandler.handleMultipleKeyEvents(['d', 'd']);
 
     // assert
-    actual = await Register.get(vimState);
+    actual = await Register.get(vimState.recordedState.registerName);
     assert.strictEqual(actual?.text, expected);
   });
 
@@ -429,15 +426,15 @@ suite('Remapper', () => {
 
     const expected = 'text-to-put-on-register';
     let actual: IRegisterContent | undefined;
-    Register.put(expected, modeHandler.vimState);
-    actual = await Register.get(vimState);
+    Register.put(modeHandler.vimState, expected);
+    actual = await Register.get(vimState.recordedState.registerName);
     assert.strictEqual(actual?.text, expected);
 
     // act
     await modeHandler.handleMultipleKeyEvents(['d', 'w']);
 
     // assert
-    actual = await Register.get(vimState);
+    actual = await Register.get(vimState.recordedState.registerName);
     assert.strictEqual(actual?.text, expected);
   });
 
@@ -608,28 +605,28 @@ suite('Remapper', () => {
     assert.strictEqual(
       modeHandler.vimState.cursorStopPosition.character,
       0,
-      'Cursor is not on the right position, should be at the start of line'
+      'Cursor is not on the right position, should be at the start of line',
     );
 
     // act and assert
 
     // check that 'ww' -> 'dw' waits for timeout to finish and timeout isn't run twice
-    let result1: string[] = await new Promise(async (r1Resolve, r1Reject) => {
-      let p1: Promise<string> = new Promise((p1Resolve, p1Reject) => {
+    const result1: string[] = await new Promise(async (r1Resolve, r1Reject) => {
+      const p1: Promise<string> = new Promise((p1Resolve, p1Reject) => {
         setTimeout(() => {
           // get line after half timeout finishes
-          const currentLine = TextEditor.readLineAt(0);
+          const currentLine = modeHandler.vimState.document.lineAt(0).text;
           p1Resolve(currentLine);
         }, timeout / 2);
       });
-      let p2: Promise<string> = new Promise((p2Resolve, p2Reject) => {
+      const p2: Promise<string> = new Promise((p2Resolve, p2Reject) => {
         setTimeout(() => {
           // get line after timeout + offset finishes
-          const currentLine = TextEditor.readLineAt(0);
+          const currentLine = modeHandler.vimState.document.lineAt(0).text;
           p2Resolve(currentLine);
         }, timeout + timeoutOffset);
       });
-      let p3: Promise<string> = new Promise(async (p3Resolve, p3Reject) => {
+      const p3: Promise<string> = new Promise(async (p3Resolve, p3Reject) => {
         await modeHandler.handleMultipleKeyEvents(['w', 'w']);
         p3Resolve('modeHandler.handleMultipleKeyEvents finished');
       });
@@ -648,34 +645,38 @@ suite('Remapper', () => {
     assert.strictEqual(result1[1], 'bar biz');
 
     // check that 'www' -> 'dw' and then 'w' waits for timeout to finish
-    let result2: { line: string; position: number }[] = await new Promise(
+    const result2: Array<{ line: string; position: number }> = await new Promise(
       async (r2Resolve, r2Reject) => {
-        let p1: Promise<{ line: string; position: number }> = new Promise((p1Resolve, p1Reject) => {
-          setTimeout(() => {
-            // get line and cursor character after half timeout finishes
-            const currentLine = TextEditor.readLineAt(0);
-            const cursorCharacter = modeHandler.vimState.cursorStopPosition.character;
-            p1Resolve({ line: currentLine, position: cursorCharacter });
-          }, timeout / 2);
-        });
-        let p2: Promise<{ line: string; position: number }> = new Promise((p2Resolve, p2Reject) => {
-          setTimeout(() => {
-            // get line and cursor character after timeout + offset finishes
-            const currentLine = TextEditor.readLineAt(0);
-            const cursorCharacter = modeHandler.vimState.cursorStopPosition.character;
-            p2Resolve({ line: currentLine, position: cursorCharacter });
-          }, timeout + timeoutOffset);
-        });
-        let p3: Promise<{ line: string; position: number }> = new Promise(
+        const p1: Promise<{ line: string; position: number }> = new Promise(
+          (p1Resolve, p1Reject) => {
+            setTimeout(() => {
+              // get line and cursor character after half timeout finishes
+              const currentLine = modeHandler.vimState.document.lineAt(0).text;
+              const cursorCharacter = modeHandler.vimState.cursorStopPosition.character;
+              p1Resolve({ line: currentLine, position: cursorCharacter });
+            }, timeout / 2);
+          },
+        );
+        const p2: Promise<{ line: string; position: number }> = new Promise(
+          (p2Resolve, p2Reject) => {
+            setTimeout(() => {
+              // get line and cursor character after timeout + offset finishes
+              const currentLine = modeHandler.vimState.document.lineAt(0).text;
+              const cursorCharacter = modeHandler.vimState.cursorStopPosition.character;
+              p2Resolve({ line: currentLine, position: cursorCharacter });
+            }, timeout + timeoutOffset);
+          },
+        );
+        const p3: Promise<{ line: string; position: number }> = new Promise(
           async (p3Resolve, p3Reject) => {
             await modeHandler.handleMultipleKeyEvents(['w', 'w', 'w']);
             p3Resolve({ line: 'modeHandler.handleMultipleKeyEvents finished', position: -1 });
-          }
+          },
         );
         await Promise.all([p1, p2, p3]).then((results) => {
           r2Resolve(results);
         });
-      }
+      },
     );
 
     // Before the timeout finishes it shouldn't have changed anything yet,
@@ -684,7 +685,7 @@ suite('Remapper', () => {
     assert.strictEqual(
       result2[0].position,
       0,
-      'Cursor is not on the right position, should be at the start of line'
+      'Cursor is not on the right position, should be at the start of line',
     );
 
     // After the timeout finishes (plus an offset to be sure it finished)
@@ -694,7 +695,7 @@ suite('Remapper', () => {
     assert.strictEqual(
       result2[1].position,
       2,
-      'Cursor is not on the right position, should be at the end of line'
+      'Cursor is not on the right position, should be at the end of line',
     );
 
     // add new line
@@ -703,16 +704,16 @@ suite('Remapper', () => {
     assert.strictEqual(
       modeHandler.vimState.cursorStopPosition.character,
       2,
-      'Cursor is not on the right position, should be at the end of line'
+      'Cursor is not on the right position, should be at the end of line',
     );
     assert.strictEqual(
       modeHandler.vimState.cursorStopPosition.line,
       1,
-      'Cursor is not on the right position, should be on second line'
+      'Cursor is not on the right position, should be on second line',
     );
 
     // check that 'wwww' -> 'dd' doesn't wait for timeout
-    let result3 = await new Promise(async (r3Resolve, r3Reject) => {
+    const result3 = await new Promise(async (r3Resolve, r3Reject) => {
       const start = Number(new Date());
 
       await modeHandler.handleMultipleKeyEvents(['w', 'w', 'w', 'w']).then(() => {
@@ -723,12 +724,12 @@ suite('Remapper', () => {
         assert.strictEqual(
           modeHandler.vimState.cursorStopPosition.character,
           0,
-          'Cursor is not on the right position, shoul be at the start of line'
+          'Cursor is not on the right position, shoul be at the start of line',
         );
         assert.strictEqual(
           modeHandler.vimState.cursorStopPosition.line,
           0,
-          'Cursor is not on the right position, should be on first line'
+          'Cursor is not on the right position, should be on first line',
         );
 
         // We check if the elapsed time is less than half the timeout instead of
@@ -748,12 +749,12 @@ suite('Remapper', () => {
     assert.strictEqual(
       modeHandler.vimState.cursorStopPosition.character,
       2,
-      'Cursor is not on the right position, should be at the end of line'
+      'Cursor is not on the right position, should be at the end of line',
     );
     assert.strictEqual(
       modeHandler.vimState.cursorStopPosition.line,
       1,
-      'Cursor is not on the right position, should be on second line'
+      'Cursor is not on the right position, should be on second line',
     );
 
     // check 'bb' -> 'dd' sending each 'b' one by one checking between them to see
@@ -770,18 +771,18 @@ suite('Remapper', () => {
     assert.strictEqual(
       modeHandler.vimState.cursorStopPosition.character,
       2,
-      'Cursor is not on the right position, should be at the end of line'
+      'Cursor is not on the right position, should be at the end of line',
     );
     assert.strictEqual(
       modeHandler.vimState.cursorStopPosition.line,
       1,
-      'Cursor is not on the right position, should be on second line'
+      'Cursor is not on the right position, should be on second line',
     );
 
     // wait for 500 miliseconds (half of timeout) to simulate the time the user takes
     // between presses. Not using a fixed value here in case the default configuration
     // gets changed to use a lower value for timeout.
-    let waited: boolean = await new Promise((wResolve, wReject) => {
+    const waited: boolean = await new Promise((wResolve, wReject) => {
       setTimeout(() => {
         wResolve(true);
       }, timeout / 2);
@@ -798,12 +799,12 @@ suite('Remapper', () => {
     assert.strictEqual(
       modeHandler.vimState.cursorStopPosition.character,
       0,
-      'Cursor is not on the right position, shoul be at the start of line'
+      'Cursor is not on the right position, shoul be at the start of line',
     );
     assert.strictEqual(
       modeHandler.vimState.cursorStopPosition.line,
       0,
-      'Cursor is not on the right position, should be on first line'
+      'Cursor is not on the right position, should be on first line',
     );
 
     // We check if the elapsedTime is less than the timeout minus an offset just
@@ -817,5 +818,3 @@ suite('Remapper', () => {
     assert.strictEqual(elapsedTime < timeout - timeoutOffset, true);
   });
 });
-
-/* tslint:enable:no-string-literal */

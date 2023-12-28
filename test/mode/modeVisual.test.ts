@@ -4,7 +4,6 @@ import { getAndUpdateModeHandler } from '../../extension';
 import { Globals } from '../../src/globals';
 import { Mode } from '../../src/mode/mode';
 import { ModeHandler } from '../../src/mode/modeHandler';
-import { TextEditor } from '../../src/textEditor';
 import { newTest, newTestSkip } from '../testSimplifier';
 import {
   assertEqualLines,
@@ -31,12 +30,25 @@ suite('Mode Visual', () => {
     assert.strictEqual(modeHandler.currentMode, Mode.Normal);
   });
 
+  newTest({
+    title: '[count]v',
+    start: ['a|bcde'],
+    keysPressed: '3vd',
+    end: ['a|e'],
+  });
+
+  newTest({
+    title: '[count]v past EOL',
+    start: ['a|bcde', '12345'],
+    keysPressed: '100vd',
+    end: ['a|12345'],
+  });
+
   test('Can handle w', async () => {
     await modeHandler.handleMultipleKeyEvents('itest test test\ntest\n'.split(''));
     await modeHandler.handleMultipleKeyEvents(['<Esc>', 'g', 'g', 'v', 'w']);
 
-    const sel = TextEditor.getSelection();
-
+    const sel = modeHandler.vimState.editor.selection;
     assert.strictEqual(sel.start.character, 0);
     assert.strictEqual(sel.start.line, 0);
 
@@ -583,6 +595,14 @@ suite('Mode Visual', () => {
       });
 
       newTest({
+        title: `Can do di${buttonToPress} on a matching bracket from outside bracket`,
+        start: [`| ${start} one ${start} two ${start} three ${end} four ${end} five ${end}`],
+        keysPressed: `di${buttonToPress}`,
+        end: [` ${start}|${end}`],
+        endMode: Mode.Normal,
+      });
+
+      newTest({
         title: `Can do i${buttonToPress} on multiple matching brackets`,
         start: [`${start} one ${start} two ${start} th|ree ${end} four ${end} five ${end}`],
         keysPressed: `vi${buttonToPress}i${buttonToPress}i${buttonToPress}d`,
@@ -618,6 +638,14 @@ suite('Mode Visual', () => {
     });
 
     newTest({
+      title: 'Cannot do vit on a matching tag from outside tag',
+      start: ['|one <blink>hello</blink> two'],
+      keysPressed: 'vitd',
+      end: ['|ne <blink>hello</blink> two'],
+      endMode: Mode.Normal,
+    });
+
+    newTest({
       title:
         'Count-prefixed vit alternates expanding selection between inner and outer tag brackets',
       start: ['<div> one <p> t|wo </p> three </div>'],
@@ -631,6 +659,14 @@ suite('Mode Visual', () => {
       start: ['one <blink>he|llo</blink> two'],
       keysPressed: 'vatd',
       end: ['one | two'],
+      endMode: Mode.Normal,
+    });
+
+    newTest({
+      title: 'Cannot do vat on a matching tag from from outside tag',
+      start: ['|one <blink>hello</blink> two'],
+      keysPressed: 'vatd',
+      end: ['|ne <blink>hello</blink> two'],
       endMode: Mode.Normal,
     });
   });
@@ -684,6 +720,22 @@ suite('Mode Visual', () => {
   });
 
   newTest({
+    title: 'Can do vi) on a matching parenthesis from outside parathesis',
+    start: ['|test(test)'],
+    keysPressed: 'vi)d',
+    end: ['test(|)'],
+    endMode: Mode.Normal,
+  });
+
+  newTest({
+    title: 'Can do vi) on a matching parenthesis from outside parathesis for multiple lines',
+    start: ['|test(test)', 'test(test)'],
+    keysPressed: 'vi)d',
+    end: ['test(|)', 'test(test)'],
+    endMode: Mode.Normal,
+  });
+
+  newTest({
     title: 'Can do vi) on multiple matching parens',
     start: ['test(te(te|st)st)'],
     keysPressed: 'vi)i)d',
@@ -694,6 +746,14 @@ suite('Mode Visual', () => {
   newTest({
     title: 'Can do va) on a matching parenthesis',
     start: ['test(te|st);'],
+    keysPressed: 'va)d',
+    end: ['test|;'],
+    endMode: Mode.Normal,
+  });
+
+  newTest({
+    title: 'Can do va) on a matching parenthesis from outside parenthesis',
+    start: ['|test(test);'],
     keysPressed: 'va)d',
     end: ['test|;'],
     endMode: Mode.Normal,
@@ -852,12 +912,92 @@ suite('Mode Visual', () => {
     endMode: Mode.Normal,
   });
 
-  newTest({
-    title: 'Can do gv to reselect previous selection',
-    start: ['tes|ttest'],
-    keysPressed: 'vl<Esc>llgvd',
-    end: ['tes|est'],
-    endMode: Mode.Normal,
+  suite('`gv` restores previous visual selection', () => {
+    suite('Visual mode', () => {
+      newTest({
+        title: 'Single char',
+        start: ['one t|wo three'],
+        keysPressed: 'v' + '<Esc>' + '0' + 'gv' + 'd',
+        end: ['one t|o three'],
+        endMode: Mode.Normal,
+      });
+
+      newTest({
+        title: 'Forward selection, within line',
+        start: ['one |two three'],
+        keysPressed: 've' + '<Esc>' + '0' + 'gv' + 'd',
+        end: ['one | three'],
+        endMode: Mode.Normal,
+      });
+
+      newTest({
+        title: 'Backward selection, within line',
+        start: ['one tw|o three'],
+        keysPressed: 'vb' + '<Esc>' + '0' + 'gv' + 'd',
+        end: ['one | three'],
+        endMode: Mode.Normal,
+      });
+
+      newTest({
+        title: 'Forward selection, on EOL',
+        start: ['one', 't|wo', 'three'],
+        keysPressed: 'v$' + '<Esc>' + 'gg' + 'gv' + 'd',
+        end: ['one', 't|three'],
+        endMode: Mode.Normal,
+      });
+    });
+
+    suite('VisualLine mode', () => {
+      newTest({
+        title: 'Single line',
+        start: ['one', '|two', 'three'],
+        keysPressed: 'V' + '<Esc>' + 'gg' + 'gv' + 'd',
+        end: ['one', '|three'],
+        endMode: Mode.Normal,
+      });
+
+      newTest({
+        title: 'Forward selection',
+        start: ['one', '|two', 'three', 'four', 'five'],
+        keysPressed: 'Vjj' + '<Esc>' + 'gg' + 'gv' + 'd',
+        end: ['one', '|five'],
+        endMode: Mode.Normal,
+      });
+
+      newTest({
+        title: 'Backward selection',
+        start: ['one', 'two', 'three', '|four', 'five'],
+        keysPressed: 'Vkk' + '<Esc>' + 'gg' + 'gv' + 'd',
+        end: ['one', '|five'],
+        endMode: Mode.Normal,
+      });
+    });
+
+    suite('VisualBlock mode', () => {
+      newTest({
+        title: 'Single char',
+        start: ['one', 't|wo', 'three'],
+        keysPressed: '<C-v>' + '<Esc>' + 'gg' + 'gv' + 'd',
+        end: ['one', 't|o', 'three'],
+        endMode: Mode.Normal,
+      });
+
+      newTest({
+        title: 'Forward selection, 3x3',
+        start: ['abcde', 'b|cdea', 'cdeab', 'deabc', 'eabcd'],
+        keysPressed: '<C-v>jjll' + '<Esc>' + 'gg' + 'gv' + 'd',
+        end: ['abcde', 'b|a', 'cb', 'dc', 'eabcd'],
+        endMode: Mode.Normal,
+      });
+
+      newTest({
+        title: 'Backward selection, 3x3',
+        start: ['abcde', 'bcdea', 'cdeab', 'dea|bc', 'eabcd'],
+        keysPressed: '<C-v>kkhh' + '<Esc>' + 'gg' + 'gv' + 'd',
+        end: ['abcde', 'b|a', 'cb', 'dc', 'eabcd'],
+        endMode: Mode.Normal,
+      });
+    });
   });
 
   suite('D command will remove all selected lines', () => {
@@ -947,6 +1087,14 @@ suite('Mode Visual', () => {
     });
 
     newTest({
+      title: '`*` escapes `/` properly',
+      start: ['one |two/three four', 'one two/three four'],
+      keysPressed: 'vE*',
+      end: ['one two/three four', 'one |two/three four'],
+      endMode: Mode.Normal,
+    });
+
+    newTest({
       title: 'Works with #',
       start: [
         'public modes = [ModeName.Visual',
@@ -986,8 +1134,7 @@ suite('Mode Visual', () => {
       await modeHandler.handleMultipleKeyEvents('ifoo bar fun baz'.split(''));
       await modeHandler.handleMultipleKeyEvents(['<Esc>', 'g', 'g', 'v', 'w', '/']);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       // ensuring selection range starts from the beginning
       assert.strictEqual(selection.start.character, 0);
       assert.strictEqual(selection.start.line, 0);
@@ -1009,6 +1156,13 @@ suite('Mode Visual', () => {
       start: ['this is', 'the| best', 'test i have seen in', 'the world'],
       keysPressed: 'vj$X',
       end: ['this is', '|the world'],
+    });
+
+    newTest({
+      title: 'Backward selection',
+      start: ['one', 'two', 't|hree', 'four'],
+      keysPressed: 'vkX',
+      end: ['one', '|four'],
     });
   });
 
@@ -1217,22 +1371,21 @@ suite('Mode Visual', () => {
   suite('replace text in characterwise visual-mode with characterwise register content', () => {
     test('gv selects the last pasted text (which is shorter than original)', async () => {
       await modeHandler.handleMultipleKeyEvents(
-        'ireplace this\nwith me\nor with me longer than the target'.split('')
+        'ireplace this\nwith me\nor with me longer than the target'.split(''),
       );
       await modeHandler.handleMultipleKeyEvents(['<Esc>']);
       await modeHandler.handleMultipleKeyEvents(
-        '2ggv$hy'.split('') // yank the second line
+        '2ggv$hy'.split(''), // yank the second line
       );
       await modeHandler.handleMultipleKeyEvents(
-        'ggv$hp'.split('') // replace the first line
+        'ggv$hp'.split(''), // replace the first line
       );
       await modeHandler.handleMultipleKeyEvents(['g', 'v']);
 
       assert.strictEqual(modeHandler.currentMode, Mode.Visual);
       assertEqualLines(['with me', 'with me', 'or with me longer than the target']);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       // ensuring selecting 'with me' at the first line
       assert.strictEqual(selection.start.character, 0);
       assert.strictEqual(selection.start.line, 0);
@@ -1242,14 +1395,14 @@ suite('Mode Visual', () => {
 
     test('gv selects the last pasted text (which is longer than original)', async () => {
       await modeHandler.handleMultipleKeyEvents(
-        'ireplace this\nwith me\nor with me longer than the target'.split('')
+        'ireplace this\nwith me\nor with me longer than the target'.split(''),
       );
       await modeHandler.handleMultipleKeyEvents(['<Esc>']);
       await modeHandler.handleMultipleKeyEvents(
-        'v0y'.split('') // yank the last line
+        'v0y'.split(''), // yank the last line
       );
       await modeHandler.handleMultipleKeyEvents(
-        'ggv$hp'.split('') // replace the first line
+        'ggv$hp'.split(''), // replace the first line
       );
       await modeHandler.handleMultipleKeyEvents(['g', 'v']);
 
@@ -1260,8 +1413,7 @@ suite('Mode Visual', () => {
         'or with me longer than the target',
       ]);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       // ensuring selecting 'or with me longer than the target' at the first line
       assert.strictEqual(selection.start.character, 0);
       assert.strictEqual(selection.start.line, 0);
@@ -1273,18 +1425,17 @@ suite('Mode Visual', () => {
       await modeHandler.handleMultipleKeyEvents('ireplace this\nfoo\nbar'.split(''));
       await modeHandler.handleMultipleKeyEvents(['<Esc>']);
       await modeHandler.handleMultipleKeyEvents(
-        '2ggvjey'.split('') // yank 'foo\nbar'
+        '2ggvjey'.split(''), // yank 'foo\nbar'
       );
       await modeHandler.handleMultipleKeyEvents(
-        'ggvep'.split('') // replace 'replace'
+        'ggvep'.split(''), // replace 'replace'
       );
       await modeHandler.handleMultipleKeyEvents(['g', 'v']);
 
       assert.strictEqual(modeHandler.currentMode, Mode.Visual);
       assertEqualLines(['foo', 'bar this', 'foo', 'bar']);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       // ensuring selecting 'foo\nbar'
       assert.strictEqual(selection.start.character, 0);
       assert.strictEqual(selection.start.line, 0);
@@ -1302,8 +1453,7 @@ suite('Mode Visual', () => {
 
       assert.strictEqual(modeHandler.currentMode, Mode.Visual);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       assert.strictEqual(selection.start.character, 0);
       assert.strictEqual(selection.start.line, 0);
       assert.strictEqual(selection.end.character, 'hello'.length);
@@ -1318,8 +1468,7 @@ suite('Mode Visual', () => {
 
       assert.strictEqual(modeHandler.currentMode, Mode.Visual);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       assert.strictEqual(selection.start.character, 0);
       assert.strictEqual(selection.start.line, 1);
       assert.strictEqual(selection.end.character, 5);
@@ -1334,8 +1483,7 @@ suite('Mode Visual', () => {
 
       assert.strictEqual(modeHandler.currentMode, Mode.Visual);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       assert.strictEqual(selection.start.character, 1);
       assert.strictEqual(selection.start.line, 1);
       assert.strictEqual(selection.end.character, 5);
@@ -1350,8 +1498,7 @@ suite('Mode Visual', () => {
 
       assert.strictEqual(modeHandler.currentMode, Mode.Visual);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       assert.strictEqual(selection.start.character, 3);
       assert.strictEqual(selection.start.line, 1);
       assert.strictEqual(selection.end.character, 5);
@@ -1366,8 +1513,7 @@ suite('Mode Visual', () => {
 
       assert.strictEqual(modeHandler.currentMode, Mode.Visual);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       assert.strictEqual(selection.start.character, 4);
       assert.strictEqual(selection.start.line, 1);
       assert.strictEqual(selection.end.character, 5);
@@ -1382,8 +1528,7 @@ suite('Mode Visual', () => {
 
       assert.strictEqual(modeHandler.currentMode, Mode.Visual);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       assert.strictEqual(selection.start.character, 5);
       assert.strictEqual(selection.start.line, 1);
       assert.strictEqual(selection.end.character, 5);
@@ -1721,6 +1866,46 @@ suite('Mode Visual', () => {
         `    "": ["g", "j"],`,
         `  },`,
         `]`,
+      ],
+      endMode: Mode.Normal,
+    });
+
+    newTest({
+      title: 'Command editor.action.smartSelect.expand on visual mode linewise',
+      config: {
+        visualModeKeyBindings: [
+          {
+            before: ['J'],
+            commands: ['editor.action.smartSelect.expand'],
+          },
+        ],
+        leader: ' ',
+      },
+      start: [
+        `{`,
+        `  "vim.visualModeKeyBindingsNonRecursive": [`,
+        `    {|`,
+        `      "before": ["J"],`,
+        `      "commands": ["editor.action.smartSelect.expand"]`,
+        `    },`,
+        `    {`,
+        `      "before": ["K"],`,
+        `      "commands": ["editor.action.smartSelect.shrink"]`,
+        `    }`,
+        `  ],`,
+        `}`,
+      ],
+      keysPressed: 'VJd',
+      end: [
+        `{`,
+        `  "vim.visualModeKeyBindingsNonRecursive": [`,
+        `|`,
+        `    {`,
+        `      "before": ["K"],`,
+        `      "commands": ["editor.action.smartSelect.shrink"]`,
+        `    }`,
+        `  ],`,
+        `}`,
       ],
       endMode: Mode.Normal,
     });

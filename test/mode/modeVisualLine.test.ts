@@ -3,7 +3,6 @@ import * as assert from 'assert';
 import { getAndUpdateModeHandler } from '../../extension';
 import { Mode } from '../../src/mode/mode';
 import { ModeHandler } from '../../src/mode/modeHandler';
-import { TextEditor } from '../../src/textEditor';
 import { newTest } from '../testSimplifier';
 import { assertEqualLines, cleanUpWorkspace, setupWorkspace } from './../testUtils';
 
@@ -39,8 +38,7 @@ suite('Mode Visual Line', () => {
     await modeHandler.handleMultipleKeyEvents('itest test test\ntest\n'.split(''));
     await modeHandler.handleMultipleKeyEvents(['<Esc>', 'g', 'g', 'v', 'w']);
 
-    const sel = TextEditor.getSelection();
-
+    const sel = modeHandler.vimState.editor.selection;
     assert.strictEqual(sel.start.character, 0);
     assert.strictEqual(sel.start.line, 0);
 
@@ -372,22 +370,21 @@ suite('Mode Visual Line', () => {
 
     test('gv selects the last pasted text (which is shorter than original)', async () => {
       await modeHandler.handleMultipleKeyEvents(
-        'ireplace this\nwith me\nor with me longer than the target'.split('')
+        'ireplace this\nwith me\nor with me longer than the target'.split(''),
       );
       await modeHandler.handleMultipleKeyEvents(['<Esc>']);
       await modeHandler.handleMultipleKeyEvents(
-        '2ggyy'.split('') // yank the second line
+        '2ggyy'.split(''), // yank the second line
       );
       await modeHandler.handleMultipleKeyEvents(
-        'ggVp'.split('') // replace the first line
+        'ggVp'.split(''), // replace the first line
       );
       await modeHandler.handleMultipleKeyEvents(['g', 'v']);
 
       assert.strictEqual(modeHandler.currentMode, Mode.VisualLine);
       assertEqualLines(['with me', 'with me', 'or with me longer than the target']);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       // ensuring selecting 'with me' at the first line
       assert.strictEqual(selection.start.character, 0);
       assert.strictEqual(selection.start.line, 0);
@@ -397,14 +394,14 @@ suite('Mode Visual Line', () => {
 
     test('gv selects the last pasted text (which is longer than original)', async () => {
       await modeHandler.handleMultipleKeyEvents(
-        'ireplace this\nwith me\nor with me longer than the target'.split('')
+        'ireplace this\nwith me\nor with me longer than the target'.split(''),
       );
       await modeHandler.handleMultipleKeyEvents(['<Esc>']);
       await modeHandler.handleMultipleKeyEvents(
-        'yy'.split('') // yank the last line
+        'yy'.split(''), // yank the last line
       );
       await modeHandler.handleMultipleKeyEvents(
-        'ggVp'.split('') // replace the first line
+        'ggVp'.split(''), // replace the first line
       );
       await modeHandler.handleMultipleKeyEvents(['g', 'v']);
 
@@ -415,8 +412,7 @@ suite('Mode Visual Line', () => {
         'or with me longer than the target',
       ]);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       // ensuring selecting 'or with me longer than the target' at the first line
       assert.strictEqual(selection.start.character, 0);
       assert.strictEqual(selection.start.line, 0);
@@ -428,18 +424,17 @@ suite('Mode Visual Line', () => {
       await modeHandler.handleMultipleKeyEvents('ireplace this\nfoo\nbar'.split(''));
       await modeHandler.handleMultipleKeyEvents(['<Esc>']);
       await modeHandler.handleMultipleKeyEvents(
-        'Vky'.split('') // yank 'foo\nbar\n'
+        'Vky'.split(''), // yank 'foo\nbar\n'
       );
       await modeHandler.handleMultipleKeyEvents(
-        'ggVp'.split('') // replace the first line
+        'ggVp'.split(''), // replace the first line
       );
       await modeHandler.handleMultipleKeyEvents(['g', 'v']);
 
       assert.strictEqual(modeHandler.currentMode, Mode.VisualLine);
       assertEqualLines(['foo', 'bar', 'foo', 'bar']);
 
-      const selection = TextEditor.getSelection();
-
+      const selection = modeHandler.vimState.editor.selection;
       // ensuring selecting 'foo\nbar\n'
       assert.strictEqual(selection.start.character, 0);
       assert.strictEqual(selection.start.line, 0);

@@ -5,7 +5,7 @@ import { Notation } from '../../src/configuration/notation';
 suite('Notation', () => {
   test('Normalize', () => {
     const leaderKey = '//';
-    const testCases = {
+    const testCases: { [key: string]: string } = {
       '<cTrL+w>': '<C-w>',
       'cTrL+x': '<C-x>',
       'CtRl+y': '<C-y>',
@@ -22,6 +22,10 @@ suite('Notation', () => {
       '<space>': ' ',
       '<uP>': '<up>',
       '<Shift+Tab>': '<S-tab>',
+      '<S-j>': 'J',
+      '<S-J>': 'J',
+      '<s-j>': 'J',
+      '<s-J>': 'J',
     };
 
     for (const test in testCases) {
